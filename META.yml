@@ -1,7 +1,7 @@
 --- #YAML:1.0
 name:               Log-Syslog-Fast
-version:            0.27
-abstract:           Perl extension for sending syslog messages over TCP or UDP
+version:            0.28
+abstract:           Perl extension for sending syslog messages over TCP, UDP,
 author:
     - Adam Thomason <athomason@sixapart.com>
 license:            unknown
@@ -10,7 +10,8 @@ configure_requires:
     ExtUtils::MakeMaker:  0
 build_requires:
     ExtUtils::MakeMaker:  0
-requires:  {}
+requires:
+    Log::Syslog::Constants:  1
 no_index:
     directory:
         - t
