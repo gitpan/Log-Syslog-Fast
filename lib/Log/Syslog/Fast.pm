@@ -6,8 +6,9 @@ use warnings;
 
 require Exporter;
 use Log::Syslog::Constants ();
+use Carp 'croak';
 
-our $VERSION = '0.46';
+our $VERSION = '0.48';
 
 our @ISA = qw(Log::Syslog::Constants Exporter);
 
@@ -30,7 +31,7 @@ sub AUTOLOAD {
     if (Log::Syslog::Constants->can($meth)) {
         return Log::Syslog::Constants->$meth(@_);
     }
-    die "Undefined subroutine $AUTOLOAD";
+    croak "Undefined subroutine $AUTOLOAD";
 }
 
 require XSLoader;
@@ -101,6 +102,8 @@ The syslog facility constant, eg 16 for 'local0'. See RFC3164 section 4.1.1 (or
 E<lt>sys/syslog.hE<gt>) for appropriate constant values. See L<EXPORTS> below
 for making these available by name.
 
+The I<priority> value is computed from the facility and severity per the RFC.
+
 =item $severity
 
 The syslog severity constant, eg 6 for 'info'. See RFC3164 section 4.1.1 (or
@@ -149,7 +152,15 @@ or LOG_UNIX mode.
 
 =item $logger-E<gt>set_priority($facility, $severity)
 
-Change the syslog facility and severity.
+Change both the syslog facility and severity.
+
+=item $logger-E<gt>set_facility($facility)
+
+Change only the syslog facility.
+
+=item $logger-E<gt>set_severity($severity)
+
+Change only the syslog severity.
 
 =item $logger-E<gt>set_sender($sender)
 
@@ -162,6 +173,18 @@ Change what is sent as the name of the sending program.
 =item $logger-E<gt>set_pid($name)
 
 Change what is sent as the process id of the sending program.
+
+=item $logger-E<gt>get_priority()
+
+Returns the current priority value.
+
+=item $logger-E<gt>get_facility()
+
+Returns the current facility value.
+
+=item $logger-E<gt>get_severity()
+
+Returns the current severity value.
 
 =back
 
