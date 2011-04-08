@@ -1,54 +1,197 @@
-package Log::Syslog::Fast;
+package Log::Syslog::Fast::PP;
 
 use 5.006002;
 use strict;
 use warnings;
 
 require Exporter;
-use Log::Syslog::Constants ();
 use Carp 'croak';
 
-our $VERSION = '0.54';
-
-our @ISA = qw(Log::Syslog::Constants Exporter);
+our @ISA = qw(Exporter);
 
 # protocols
 use constant LOG_UDP    => 0; # UDP
 use constant LOG_TCP    => 1; # TCP
 use constant LOG_UNIX   => 2; # UNIX socket
 
+use POSIX 'strftime';
+use IO::Socket::INET;
+use IO::Socket::UNIX;
+
 our %EXPORT_TAGS = (
     protos => [qw/ LOG_TCP LOG_UDP LOG_UNIX /],
-    %Log::Syslog::Constants::EXPORT_TAGS,
 );
 push @{ $EXPORT_TAGS{'all'} }, @{ $EXPORT_TAGS{'protos'} };
 
 our @EXPORT_OK = @{ $EXPORT_TAGS{'all'} };
 our @EXPORT = qw();
 
-sub AUTOLOAD {
-    (my $meth = our $AUTOLOAD) =~ s/.*:://;
-    if (Log::Syslog::Constants->can($meth)) {
-        return Log::Syslog::Constants->$meth(@_);
-    }
-    croak "Undefined subroutine $AUTOLOAD";
+use constant PRIORITY   => 0;
+use constant SENDER     => 1;
+use constant NAME       => 2;
+use constant PID        => 3;
+use constant SOCK       => 4;
+use constant LAST_TIME  => 5;
+use constant PREFIX     => 6;
+
+sub new {
+    my $ref = shift;
+    my $class = ref $ref || $ref;
+
+    my ($proto, $hostname, $port, $facility, $severity, $sender, $name) = @_;
+
+    my $self = bless [
+        ($facility << 3) | $severity, # prio
+        $sender, # sender
+        $name, # name
+        $$, # pid
+        undef, # sock
+        undef, # last_time
+        undef, # prefix
+        undef, # prefix_len
+    ], $class;
+
+    $self->update_prefix(time());
+
+    $self->set_receiver($proto, $hostname, $port);
+
+    return $self;
 }
 
-require XSLoader;
-XSLoader::load('Log::Syslog::Fast', $VERSION);
+sub update_prefix {
+    my $self = shift;
+    my $t = shift;
+
+    $self->[LAST_TIME] = $t;
+
+    my $timestr = strftime("%h %e %T", localtime $t);
+    $self->[PREFIX] = sprintf "<%d>%s %s %s[%d]: ",
+        $self->[PRIORITY], $timestr, $self->[SENDER], $self->[NAME], $self->[PID];
+}
+
+sub set_receiver {
+    my $self = shift;
+    my ($proto, $hostname, $port) = @_;
+
+    if ($proto == LOG_TCP) {
+        $self->[SOCK] = IO::Socket::INET->new(
+            Proto    => 'tcp',
+            PeerHost => $hostname,
+            PeerPort => $port,
+        );
+    }
+    elsif ($proto == LOG_UDP) {
+        $self->[SOCK] = IO::Socket::INET->new(
+            Proto    => 'udp',
+            PeerHost => $hostname,
+            PeerPort => $port,
+        );
+    }
+    elsif ($proto == LOG_UNIX) {
+        eval {
+            $self->[SOCK] = IO::Socket::UNIX->new(
+                Proto => SOCK_STREAM,
+                Peer  => $hostname,
+            );
+        };
+        if ($@ || !$self->[SOCK]) {
+            $self->[SOCK] = IO::Socket::UNIX->new(
+                Proto => SOCK_DGRAM,
+                Peer  => $hostname,
+            );
+        }
+    }
+
+    die "Error in ->set_receiver: $!" unless $self->[SOCK];
+}
+
+sub set_priority {
+    my $self = shift;
+    my ($facility, $severity) = @_;
+    $self->[PRIORITY] = ($facility << 3) | $severity;
+    $self->update_prefix(time);
+}
+
+sub set_facility {
+    my $self = shift;
+    $self->set_priority(shift, $self->get_severity);
+}
+
+sub set_severity {
+    my $self = shift;
+    $self->set_priority($self->get_facility, shift);
+}
+
+sub set_sender {
+    my $self = shift;
+    $self->[SENDER] = shift;
+    $self->update_prefix(time);
+}
+
+sub set_name {
+    my $self = shift;
+    $self->[NAME] = shift;
+    $self->update_prefix(time);
+}
+
+sub set_pid {
+    my $self = shift;
+    $self->[PID] = shift;
+    $self->update_prefix(time);
+}
+
+sub send {
+    my $now = $_[2] || time;
+
+    # update the prefix if seconds have rolled over
+    if ($now != $_[0][LAST_TIME]) {
+        $_[0]->update_prefix($now);
+    }
+
+    send $_[0][SOCK], $_[0][PREFIX] . $_[1], 0;
+}
+
+sub get_priority {
+    my $self = shift;
+    return $self->[PRIORITY];
+}
+
+sub get_facility {
+    my $self = shift;
+    return $self->[PRIORITY] >> 3;
+}
+
+sub get_severity {
+    my $self = shift;
+    return $self->[PRIORITY] & 7;
+}
+
+sub get_sender {
+    my $self = shift;
+    return $self->[SENDER];
+}
+
+sub get_name {
+    my $self = shift;
+    return $self->[NAME];
+}
+
+sub get_pid {
+    my $self = shift;
+    return $self->[PID];
+}
 
 1;
 __END__
 
 =head1 NAME
 
-Log::Syslog::Fast - Perl extension for sending syslog messages over TCP, UDP,
-or UNIX sockets with minimal CPU overhead.
+Log::Syslog::Fast::PP - XS-free, API-compatible version of Log::Syslog::Fast
 
 =head1 SYNOPSIS
 
-  use Log::Syslog::Fast ':all';
-  my $logger = Log::Syslog::Fast->new(LOG_UDP, "127.0.0.1", 514, LOG_LOCAL0, LOG_INFO, "mymachine", "logger");
+  use Log::Syslog::Fast::PP ':all';
+  my $logger = Log::Syslog::Fast::PP->new(LOG_UDP, "127.0.0.1", 514, LOG_LOCAL0, LOG_INFO, "mymachine", "logger");
   $logger->send("log message", time);
 
 =head1 DESCRIPTION
@@ -66,9 +209,9 @@ This module supercedes the less general L<Log::Syslog::UDP>.
 
 =over 4
 
-=item Log::Syslog::Fast-E<gt>new($proto, $hostname, $port, $facility, $severity, $sender, $name);
+=item Log::Syslog::Fast::PP-E<gt>new($proto, $hostname, $port, $facility, $severity, $sender, $name);
 
-Create a new Log::Syslog::Fast object with the following parameters:
+Create a new Log::Syslog::Fast::PP object with the following parameters:
 
 =over 4
 
@@ -228,7 +371,7 @@ Use Log::Syslog::Constants to export priority constants, e.g. LOG_INFO.
 
 L<Log::Syslog::Constants>
 
-L<Sys::Syslog>
+L<Log::Syslog::Fast>
 
 =head1 BUGS
 
